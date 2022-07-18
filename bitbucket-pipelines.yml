@@ -1,0 +1,77 @@
+image: node:14.15.1
+
+definitions:
+  services:
+    docker:
+      memory: 1024
+    mongo:
+      image: mongo:4.4.4
+  steps:
+    - step: &integration-test
+        name: Integration test
+        caches:
+          - node
+          - docker
+        script:
+          - cd ./docker-mysql
+          - chmod 0444 ./custom/config-file.cnf # set permission in order to copy this to mysql docker
+          - docker build -t my-mysql .
+          - docker run -d -p 8002:3306 --name my-mysql -e MYSQL_ROOT_PASSWORD=supersecret my-mysql
+          - cd ..
+          - echo $DOT_ENV_CI | base64 --decode > .env
+          - yarn install
+          # override env variable to point db to pipeline mysql service
+          - DB_CON="{\"host\":\"127.0.0.1\",\"port\":8002,\"user\":\"root\",\"password\":\"supersecret\",\"database\":\"mypay_db\",\"charset\":\"utf8\",\"timezone\":\"+00:00\"}"
+          # override env variable to point notification db to pipeline mongodb service
+          - NOTIFICATION_DB_CON="mongodb://127.0.0.1:27017/mypay-staging-notifications"
+          # running knex migration & seed
+          - DB_CON=$DB_CON NOTIFICATION_DB_CON=$NOTIFICATION_DB_CON node ./docker-mysql/check-connection.js
+          - DB_CON=$DB_CON NOTIFICATION_DB_CON=$NOTIFICATION_DB_CON npx knex migrate:latest
+          - if [ "$(ls -A ./knex/seeds)" ]; then DB_CON=$DB_CON NOTIFICATION_DB_CON=$NOTIFICATION_DB_CON npx knex seed:run; fi;
+          # run tests
+          - DB_CON=$DB_CON NOTIFICATION_DB_CON=$NOTIFICATION_DB_CON yarn test
+        services:
+          - docker
+          - mongo
+    - step: &integration-test-on-staging
+        name: Integration test with staging database
+        caches:
+          - node
+        script:
+          - echo $DOT_ENV_CI | base64 --decode > .env
+          - yarn install
+          # run tests
+          - yarn test
+    - step: &build-and-deploy
+        name: Build and deploy api
+        clone:
+          enabled: false
+        script:
+          - COMMANDS="cd ~/ && bash pipeline.sh $BITBUCKET_BRANCH $DOT_ENV"
+          # process on ec2
+          - ssh -tt -o StrictHostKeyChecking=no $SERVER_SSH "$COMMANDS"
+          - sleep 5 && curl "$API_URL/"
+          - echo "API DEPLOYED AT $API_URL"
+
+pipelines:
+  default:
+    - step: *integration-test
+
+  branches:
+    master:
+      - step: *integration-test
+      - step: *integration-test-on-staging
+
+    release/staging:
+      - step: *integration-test
+      - step: *integration-test-on-staging
+      - step:
+          <<: *build-and-deploy
+          deployment: staging
+
+    release/production:
+      - step: *integration-test
+      - step: *integration-test-on-staging
+      - step:
+          <<: *build-and-deploy
+          deployment: production

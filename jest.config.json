@@ -1,0 +1,7 @@
+{
+  "testRegex": "((\\.|/*.)(spec))\\.js?$",
+  "testTimeout": 10000,
+  "testEnvironment": "node",
+  "setupFilesAfterEnv": ["./__test__/setup.js"],
+  "setupFiles": ["dotenv/config"]
+}

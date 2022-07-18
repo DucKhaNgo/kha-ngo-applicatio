@@ -1,0 +1,26 @@
+
+echo "--> Updating packages"
+sudo apt update
+
+echo "--> Installing nginx"
+sudo apt install nginx-full -y
+
+echo "--> Configurating nginx"
+echo "server {
+    listen 80 default_server;
+    listen [::]:80 default_server;
+    client_max_body_size 50M;
+    server_name _;
+    location / {
+        proxy_pass  http://localhost:3030/;
+    }
+}" | sudo tee /etc/nginx/sites-available/default
+
+echo "--> Installing docker"
+sudo apt install docker.io -y
+
+echo "--> Initialize docker swarm"
+sudo docker swarm init
+
+echo "--> Generating ssh public key"
+ssh-keygen -q -t ed25519 -f ~/.ssh/id_ed25519 -N ''
